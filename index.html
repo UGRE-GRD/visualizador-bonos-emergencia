@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="es-CL">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualizador de Bonos de Emergencia</title>
+<meta name="description" content="Visualizador en vivo de bonos de emergencia: fondos aprobados, transferidos y pendientes por región, tipo de bono y evento de emergencia.">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridjs@5.0.2/dist/gridjs.umd.js" integrity="sha384-/XXDzxe4FsGiAe50i/u9pY/Vy/uX654MHB1xoc1BJNnH1WXHhqHga9g3q5tF4gj7" crossorigin="anonymous"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridjs@5.0.2/dist/theme/mermaid.min.css" integrity="sha384-jZvDSsmGB9oGGT/4l9bHXGoAv1OxvG/cFmSo0dZaSqmBgvQTKDBFAMftlXTmMbNW" crossorigin="anonymous">
+<style>
+  :root{
+    color-scheme: light;
+    --bg:#f5f7fa; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
+    --accent:#2563eb; --accent-2:#0d9488; --warn-bg:#fffbeb; --warn-border:#f59e0b; --warn-text:#92400e; --good:#059669;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1360px;margin:0 auto;padding:20px 20px 48px;}
+  header.top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px;}
+  header.top h1{font-size:22px;margin:0 0 4px;font-weight:700;}
+  header.top p{margin:0;color:var(--muted);font-size:13px;}
+  .meta-box{text-align:right;font-size:12px;color:var(--muted);background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;min-width:230px;}
+  .meta-box b{color:var(--text);}
+  .status-line{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:4px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block;}
+  .dot.loading{background:#f59e0b;animation:pulse 1s infinite;}
+  .dot.error{background:#dc2626;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .refresh-btn{margin-top:6px;background:#eff6ff;border:1px solid #bfdbfe;color:var(--accent);border-radius:6px;padding:4px 10px;font-size:11.5px;cursor:pointer;font-weight:600;}
+  #errorBanner{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;}
+  #errorBanner button{margin-left:10px;background:#991b1b;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;}
+  #pendingBanner{display:none;background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-text);padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;}
+  .filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:18px;}
+  .filters .grp{display:flex;flex-direction:column;gap:3px;}
+  .filters label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600;}
+  .filters select, .filters input[type=text]{padding:6px 8px;border-radius:7px;border:1px solid var(--border);font-size:13px;background:#fff;color:var(--text);min-width:150px;}
+  .filters button{align-self:flex-end;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:7px 12px;font-size:12.5px;cursor:pointer;color:var(--text);font-weight:600;}
+  .filters button:hover{background:#e2e8f0;}
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+  .kpi .label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px;}
+  .kpi .value{font-size:19px;font-weight:700;color:var(--text);line-height:1.2;}
+  .kpi .sub{font-size:11px;color:var(--muted);margin-top:4px;}
+  .kpi.accent .value{color:var(--accent);} .kpi.teal .value{color:var(--accent-2);} .kpi.warn .value{color:#b45309;}
+  .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px;}
+  @media (max-width:900px){.charts-grid{grid-template-columns:1fr;}}
+  .chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px 10px;}
+  .chart-card h3{margin:0 0 10px;font-size:13.5px;font-weight:700;color:var(--text);}
+  .chart-card .chart-holder{position:relative;height:260px;}
+  .chart-card .chart-holder.tall{height:300px;}
+  .table-section{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;}
+  .table-section h3{margin:0 0 10px;font-size:14px;font-weight:700;}
+  #tableRoot table.gridjs-table{font-size:12.5px;}
+  #tableRoot th.gridjs-th{background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:.02em;}
+  .detail-btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:11.5px;cursor:pointer;font-weight:600;}
+  .badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;display:inline-block;}
+  .badge.ok{background:#dcfce7;color:#166534;} .badge.pending{background:#fef3c7;color:#92400e;}
+  footer{margin-top:22px;text-align:center;font-size:11.5px;color:var(--muted);}
+  footer a{color:var(--accent);text-decoration:none;}
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;align-items:center;justify-content:center;padding:20px;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:#fff;border-radius:14px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.25);}
+  .modal h2{margin:0 0 4px;font-size:17px;}
+  .modal .modal-sub{color:var(--muted);font-size:12.5px;margin-bottom:14px;}
+  .modal .row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--border);font-size:13px;}
+  .modal .row .k{color:var(--muted);flex:0 0 44%;} .modal .row .v{font-weight:600;text-align:right;}
+  .modal .finalidad{margin-top:14px;font-size:12.5px;line-height:1.55;background:#f8fafc;border-radius:8px;padding:12px;color:#334155;}
+  .modal .closeX{float:right;background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);line-height:1;}
+  .loading-state{text-align:center;padding:60px 20px;color:var(--muted);font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Visualizador de Bonos de Emergencia</h1>
+      <p>Seguimiento de solicitudes, resoluciones y transferencias de fondos para bonos de emergencia — datos en vivo desde Google Sheets.</p>
+    </div>
+    <div class="meta-box">
+      <div><b id="metaCount">—</b> movimientos cargados</div>
+      <div>Periodo: <b id="metaRange">—</b></div>
+      <div class="status-line"><span class="dot loading" id="statusDot"></span><span id="statusText">Cargando datos…</span></div>
+      <div><button class="refresh-btn" onclick="loadData()">Actualizar ahora</button></div>
+    </div>
+  </header>
+
+  <div id="errorBanner">
+    <span id="errorText">No se pudo cargar la información.</span>
+    <button onclick="loadData()">Reintentar</button>
+  </div>
+  <div id="pendingBanner"></div>
+
+  <div class="filters" id="filtersBar">
+    <div class="grp"><label>Región</label><select id="fRegion"><option value="__all__">Todas</option></select></div>
+    <div class="grp"><label>Clasificación</label><select id="fClasificacion"><option value="__all__">Todas</option></select></div>
+    <div class="grp"><label>Tipo de bono</label><select id="fTipoBono"><option value="__all__">Todos</option></select></div>
+    <div class="grp"><label>Estado resolución</label><select id="fEstado"><option value="__all__">Todos</option></select></div>
+    <div class="grp"><label>Analista</label><select id="fAnalista"><option value="__all__">Todos</option></select></div>
+    <div class="grp"><label>Presupuesto</label><select id="fPresupuesto"><option value="__all__">Todos</option></select></div>
+    <div class="grp" style="flex:1;min-width:180px;"><label>Buscar</label><input type="text" id="fSearch" placeholder="institución, emergencia, comuna…"></div>
+    <button id="btnClear">Limpiar filtros</button>
+  </div>
+
+  <div id="content" style="display:none;">
+    <div class="kpi-grid">
+      <div class="kpi teal"><div class="label">Fondos transferidos</div><div class="value" id="kpiTransferido">—</div><div class="sub">Total efectivamente girado</div></div>
+      <div class="kpi accent"><div class="label">Fondos aprobados</div><div class="value" id="kpiAprobado">—</div><div class="sub">Comprometido en resoluciones</div></div>
+      <div class="kpi warn"><div class="label">Fondos por transferir</div><div class="value" id="kpiPendiente">—</div><div class="sub">Pendiente de giro</div></div>
+      <div class="kpi"><div class="label">% Ejecución</div><div class="value" id="kpiEjecucion">—</div><div class="sub">Transferido / Aprobado</div></div>
+      <div class="kpi"><div class="label">N° movimientos</div><div class="value" id="kpiMovimientos">—</div><div class="sub">Filas de la tabla</div></div>
+      <div class="kpi"><div class="label">N° oficios / solicitudes</div><div class="value" id="kpiOficios">—</div><div class="sub">Documentos únicos</div></div>
+      <div class="kpi"><div class="label">Regiones involucradas</div><div class="value" id="kpiRegiones">—</div><div class="sub">Con al menos un movimiento</div></div>
+      <div class="kpi"><div class="label">Monto promedio</div><div class="value" id="kpiPromedio">—</div><div class="sub">Por movimiento transferido</div></div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card"><h3>Fondos transferidos por región</h3><div class="chart-holder"><canvas id="chartRegion"></canvas></div></div>
+      <div class="chart-card"><h3>Fondos transferidos por tipo de bono</h3><div class="chart-holder"><canvas id="chartTipoBono"></canvas></div></div>
+      <div class="chart-card"><h3>Distribución por clasificación de emergencia</h3><div class="chart-holder"><canvas id="chartClasificacion"></canvas></div></div>
+      <div class="chart-card"><h3>Estado de las resoluciones</h3><div class="chart-holder"><canvas id="chartEstado"></canvas></div></div>
+      <div class="chart-card" style="grid-column:1 / -1;"><h3>Evolución mensual de fondos transferidos</h3><div class="chart-holder tall"><canvas id="chartEvolucion"></canvas></div></div>
+      <div class="chart-card" style="grid-column:1 / -1;"><h3>Aprobado vs. transferido vs. pendiente — top regiones</h3><div class="chart-holder tall"><canvas id="chartComparacion"></canvas></div></div>
+      <div class="chart-card"><h3>Fondos por institución pagadora</h3><div class="chart-holder"><canvas id="chartInstitucion"></canvas></div></div>
+      <div class="chart-card"><h3>Monto gestionado por analista</h3><div class="chart-holder"><canvas id="chartAnalista"></canvas></div></div>
+      <div class="chart-card" style="grid-column:1 / -1;"><h3>Top eventos de emergencia por fondos transferidos</h3><div class="chart-holder tall"><canvas id="chartEventos"></canvas></div></div>
+    </div>
+
+    <div class="table-section">
+      <h3>Detalle de movimientos</h3>
+      <div id="tableRoot"></div>
+    </div>
+  </div>
+
+  <div class="loading-state" id="loadingState">Cargando datos desde Google Sheets…</div>
+
+  <footer>
+    Fuente: <a href="https://docs.google.com/spreadsheets/d/1ex-GvI8Fb-hdctSe_qr_eNA5W_GLWNI6ql3kDYa8_fA/edit" target="_blank" rel="noopener">planilla de Bonos de Emergencia</a> (Google Sheets).
+    Esta página consulta la planilla directamente al cargar y se refresca sola cada 5 minutos.
+  </footer>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="closeX" onclick="closeModal()">&times;</button>
+    <h2 id="modalTitle">Detalle</h2>
+    <div class="modal-sub" id="modalSub"></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const SHEET_ID = '1ex-GvI8Fb-hdctSe_qr_eNA5W_GLWNI6ql3kDYa8_fA';
+const COLS_NAMES = [
+  'CLASIFICACIÓN','FECHA EMERGENCIA','ID DOC OFICIO SOLICITUD','NÚMERO OFICIO SOLICITUD','FECHA OFICIO SOLICITUD',
+  'FECHA RECEPCIÓN OFICIO SOLICITUD','INSTITUCIÓN PAGADORA','TIPO DE EMERGENCIA','MONTO OFICIO SOLICITUD','REGIÓN',
+  'PROVINCIA','COMUNA','FINALIDAD','ACCIÓN IMPLEMENTADA','TIPO DE BONO','ESTADO MOVIMIENTO','FECHA MOVIMIENTO',
+  'ANALISTA','ID DOC RESOLUCIÓN','TIPO DE RESOLUCIÓN','NÚMERO RESOLUCIÓN','FECHA RESOLUCIÓN','IMPUTACIÓN PRESUPUESTARIA',
+  'ESTADO RESOLUCIÓN','MONTO RESOLUCIÓN','GLOSA TRANSFERENCIA','FECHA TRANSFERENCIA','FONDOS APROBADOS',
+  'FONDOS TRANSFERIDOS','FONDOS POR TRANSFERIR','AÑO PRESUPUESTARIO','DETALLE PRESUPUESTO'
+];
+const PALETTE = ['#2563eb','#0d9488','#f59e0b','#dc2626','#7c3aed','#059669','#db2777','#0891b2','#65a30d','#ea580c','#4f46e5','#be123c'];
+
+let ALL_ROWS = [];
+let FILTERED = [];
+let CHARTS = {};
+let TABLE = null;
+let AUTO_TIMER = null;
+
+const FILTER_KEYS = ['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto','fSearch'];
+const LS_KEY = 'bonosDashboardFilters_v1';
+
+/* ---------------- Formatting helpers ---------------- */
+function parseCLP(s){
+  if (s === null || s === undefined) return 0;
+  if (typeof s === 'number') return s;
+  s = String(s).trim().replace(/\$/g,'').trim();
+  if (s === '' || s === '-') return 0;
+  s = s.replace(/\./g,'').replace(/,/g,'.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+function parseUSDate(s){
+  if (!s) return null;
+  const parts = String(s).split('/');
+  if (parts.length !== 3) return null;
+  const m = parseInt(parts[0],10), d = parseInt(parts[1],10), y = parseInt(parts[2],10);
+  if (!y || !m || !d) return null;
+  return new Date(y, m-1, d);
+}
+function fmtCLP(n){ return new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(n||0); }
+function fmtCLPShort(n){
+  n = n||0; const abs = Math.abs(n);
+  if (abs >= 1e9) return '$' + (n/1e9).toFixed(1).replace(/\.0$/,'') + 'MM';
+  if (abs >= 1e6) return '$' + (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+  if (abs >= 1e3) return '$' + (n/1e3).toFixed(0) + 'k';
+  return '$' + n.toFixed(0);
+}
+function fmtDate(d){ if (!d) return '—'; return d.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+
+/* ---------------- Google Sheets JSONP loader (no CORS issues, works on any static host) ---------------- */
+function fetchSheetJSONP(){
+  return new Promise((resolve, reject) => {
+    const cbName = '__gvizCB_' + Date.now();
+    let settled = false;
+    window[cbName] = function(json){
+      if (settled) return;
+      settled = true;
+      resolve(json);
+      cleanup();
+    };
+    const script = document.createElement('script');
+    script.src = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:json;responseHandler:' + cbName;
+    script.onerror = function(){
+      if (settled) return;
+      settled = true;
+      reject(new Error('No se pudo cargar la planilla. Verifica que esté compartida como "Cualquiera con el enlace puede ver".'));
+      cleanup();
+    };
+    function cleanup(){
+      try{ delete window[cbName]; }catch(e){}
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    document.body.appendChild(script);
+    setTimeout(() => {
+      if (!settled){
+        settled = true;
+        reject(new Error('Tiempo de espera agotado al cargar la planilla.'));
+        cleanup();
+      }
+    }, 15000);
+  });
+}
+
+function cellToDisplayString(cell, colType){
+  if (!cell || cell.v === null || cell.v === undefined) return '';
+  if ((colType === 'date' || colType === 'datetime') && typeof cell.v === 'string'){
+    const m = cell.v.match(/^Date\((\d+),(\d+),(\d+)/);
+    if (m){ return (parseInt(m[2],10)+1) + '/' + m[3] + '/' + m[1]; }
+  }
+  return String(cell.v);
+}
+
+/* ---------------- Data loading ---------------- */
+async function loadData(){
+  setStatus('loading','Cargando datos…');
+  document.getElementById('errorBanner').style.display = 'none';
+  try{
+    const json = await fetchSheetJSONP();
+    if (!json || json.status === 'error'){
+      const msg = (json && json.errors && json.errors[0] && json.errors[0].detailed_message) || 'Respuesta inválida de Google Sheets.';
+      throw new Error(msg);
+    }
+    const cols = json.table.cols || [];
+    const rowsJson = json.table.rows || [];
+
+    const objs = rowsJson.map((rowObj) => {
+      const cells = rowObj.c || [];
+      const obj = {};
+      COLS_NAMES.forEach((name, i) => {
+        const colType = cols[i] ? cols[i].type : 'string';
+        obj[name] = cellToDisplayString(cells[i], colType).trim();
+      });
+      return obj;
+    }).filter(o => o['CLASIFICACIÓN']);
+
+    ALL_ROWS = objs.map((row, idx) => {
+      row._idx = idx;
+      row._montoOficio = parseCLP(row['MONTO OFICIO SOLICITUD']);
+      row._montoResolucion = parseCLP(row['MONTO RESOLUCIÓN']);
+      row._fondosAprobados = parseCLP(row['FONDOS APROBADOS']);
+      row._fondosTransferidos = parseCLP(row['FONDOS TRANSFERIDOS']);
+      row._fondosPorTransferir = parseCLP(row['FONDOS POR TRANSFERIR']);
+      row._fechaEmergencia = parseUSDate(row['FECHA EMERGENCIA']);
+      row._fechaMovimiento = parseUSDate(row['FECHA MOVIMIENTO']);
+      row._fechaResolucion = parseUSDate(row['FECHA RESOLUCIÓN']);
+      row._fechaTransferencia = parseUSDate(row['FECHA TRANSFERENCIA']);
+      row._region = row['REGIÓN'] || 'Sin región';
+      row._clasificacion = row['CLASIFICACIÓN'] || 'Sin clasificación';
+      row._tipoBono = row['TIPO DE BONO'] || 'Sin tipo';
+      row._estadoResolucion = row['ESTADO RESOLUCIÓN'] || 'Sin estado';
+      row._institucion = row['INSTITUCIÓN PAGADORA'] || 'Sin institución';
+      row._analista = row['ANALISTA'] || 'Sin analista';
+      row._presupuesto = row['DETALLE PRESUPUESTO'] || 'Sin dato';
+      row._tipoEmergencia = row['TIPO DE EMERGENCIA'] || 'Sin tipo';
+      return row;
+    });
+
+    populateFilters();
+    restoreFilters();
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+    setStatus('ok', 'Actualizado ' + new Date().toLocaleTimeString('es-CL'));
+    applyFilters();
+
+    if (!AUTO_TIMER) AUTO_TIMER = setInterval(loadData, 5 * 60 * 1000);
+  } catch (err){
+    console.error(err);
+    setStatus('error','Error al cargar');
+    document.getElementById('errorText').textContent = 'No se pudo cargar la información desde Google Sheets: ' + (err && err.message ? err.message : err);
+    document.getElementById('errorBanner').style.display = 'block';
+    document.getElementById('loadingState').style.display = 'none';
+  }
+}
+
+function setStatus(kind, text){
+  const dot = document.getElementById('statusDot');
+  dot.className = 'dot' + (kind === 'loading' ? ' loading' : kind === 'error' ? ' error' : '');
+  document.getElementById('statusText').textContent = text;
+}
+
+/* ---------------- Filters ---------------- */
+function uniqueSorted(arr){ return [...new Set(arr.filter(v => v))].sort((a,b)=>a.localeCompare(b,'es')); }
+function fillSelect(id, values){
+  const sel = document.getElementById(id);
+  const current = sel.value;
+  sel.innerHTML = '<option value="__all__">Todas</option>';
+  values.forEach(v => { const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt); });
+  if (values.includes(current)) sel.value = current;
+}
+function populateFilters(){
+  fillSelect('fRegion', uniqueSorted(ALL_ROWS.map(r=>r._region)));
+  fillSelect('fClasificacion', uniqueSorted(ALL_ROWS.map(r=>r._clasificacion)));
+  fillSelect('fTipoBono', uniqueSorted(ALL_ROWS.map(r=>r._tipoBono)));
+  fillSelect('fEstado', uniqueSorted(ALL_ROWS.map(r=>r._estadoResolucion)));
+  fillSelect('fAnalista', uniqueSorted(ALL_ROWS.map(r=>r._analista)));
+  fillSelect('fPresupuesto', uniqueSorted(ALL_ROWS.map(r=>r._presupuesto)));
+}
+function saveFilters(){
+  const state = {}; FILTER_KEYS.forEach(k => state[k] = document.getElementById(k).value);
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+}
+function restoreFilters(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    FILTER_KEYS.forEach(k => {
+      const el = document.getElementById(k);
+      if (el && state[k] !== undefined){
+        const optExists = el.tagName === 'SELECT' ? [...el.options].some(o=>o.value===state[k]) : true;
+        if (optExists) el.value = state[k];
+      }
+    });
+  }catch(e){}
+}
+function applyFilters(){
+  const region = document.getElementById('fRegion').value;
+  const clasificacion = document.getElementById('fClasificacion').value;
+  const tipoBono = document.getElementById('fTipoBono').value;
+  const estado = document.getElementById('fEstado').value;
+  const analista = document.getElementById('fAnalista').value;
+  const presupuesto = document.getElementById('fPresupuesto').value;
+  const search = document.getElementById('fSearch').value.trim().toLowerCase();
+
+  FILTERED = ALL_ROWS.filter(r => {
+    if (region !== '__all__' && r._region !== region) return false;
+    if (clasificacion !== '__all__' && r._clasificacion !== clasificacion) return false;
+    if (tipoBono !== '__all__' && r._tipoBono !== tipoBono) return false;
+    if (estado !== '__all__' && r._estadoResolucion !== estado) return false;
+    if (analista !== '__all__' && r._analista !== analista) return false;
+    if (presupuesto !== '__all__' && r._presupuesto !== presupuesto) return false;
+    if (search){
+      const hay = [r._institucion, r._tipoEmergencia, r['COMUNA'], r['PROVINCIA'], r._tipoBono, r._region].join(' ').toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+  saveFilters();
+  renderAll();
+}
+
+/* ---------------- KPIs ---------------- */
+function renderKPIs(rows){
+  const transferido = rows.reduce((s,r)=>s+r._fondosTransferidos,0);
+  const aprobado = rows.reduce((s,r)=>s+r._fondosAprobados,0);
+  const pendiente = rows.reduce((s,r)=>s+r._fondosPorTransferir,0);
+  const ejecucion = aprobado > 0 ? (transferido/aprobado*100) : 0;
+  const nMov = rows.length;
+  const nOficios = new Set(rows.map(r=>r['ID DOC OFICIO SOLICITUD'])).size;
+  const nRegiones = new Set(rows.map(r=>r._region)).size;
+  const promedio = nMov > 0 ? transferido/nMov : 0;
+
+  document.getElementById('kpiTransferido').textContent = fmtCLP(transferido);
+  document.getElementById('kpiAprobado').textContent = fmtCLP(aprobado);
+  document.getElementById('kpiPendiente').textContent = fmtCLP(pendiente);
+  document.getElementById('kpiEjecucion').textContent = ejecucion.toFixed(1) + '%';
+  document.getElementById('kpiMovimientos').textContent = nMov.toLocaleString('es-CL');
+  document.getElementById('kpiOficios').textContent = nOficios.toLocaleString('es-CL');
+  document.getElementById('kpiRegiones').textContent = nRegiones.toLocaleString('es-CL');
+  document.getElementById('kpiPromedio').textContent = fmtCLP(promedio);
+
+  const dates = rows.map(r=>r._fechaMovimiento).filter(Boolean).sort((a,b)=>a-b);
+  document.getElementById('metaCount').textContent = ALL_ROWS.length;
+  document.getElementById('metaRange').textContent = dates.length ? (fmtDate(dates[0]) + ' – ' + fmtDate(dates[dates.length-1])) : '—';
+
+  const pendientes = rows.filter(r => r._estadoResolucion && r._estadoResolucion !== 'Totalmente Tramitada');
+  const banner = document.getElementById('pendingBanner');
+  if (pendientes.length > 0){
+    const montoPend = pendientes.reduce((s,r)=>s+r._fondosPorTransferir,0);
+    banner.style.display = 'block';
+    banner.innerHTML = '⚠️ <b>' + pendientes.length + ' movimiento(s)</b> aún no están "Totalmente Tramitada", por un total pendiente de transferir de <b>' + fmtCLP(montoPend) + '</b>.';
+  } else { banner.style.display = 'none'; }
+}
+
+/* ---------------- Aggregation ---------------- */
+function sumByKey(rows, keyFn, valFn){
+  const map = new Map();
+  rows.forEach(r => { const k = keyFn(r) || 'Sin dato'; map.set(k, (map.get(k)||0) + valFn(r)); });
+  return map;
+}
+function topEntries(map, n){ return [...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0, n); }
+
+/* ---------------- Charts ---------------- */
+function ensureChart(id, config){
+  const ctx = document.getElementById(id);
+  if (CHARTS[id]){
+    CHARTS[id].data = config.data; CHARTS[id].options = config.options; CHARTS[id].config.type = config.type; CHARTS[id].update();
+  } else { CHARTS[id] = new Chart(ctx, config); }
+}
+const commonBarOpts = {
+  responsive:true, maintainAspectRatio:false,
+  plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=> fmtCLP(c.parsed.x ?? c.parsed.y) } } },
+  scales:{ x:{ ticks:{ callback:(v)=> typeof v==='number' ? fmtCLPShort(v) : v } }, y:{} }
+};
+function renderCharts(rows){
+  const regionMap = topEntries(sumByKey(rows, r=>r._region, r=>r._fondosTransferidos), 12);
+  ensureChart('chartRegion', { type:'bar', data:{ labels: regionMap.map(e=>e[0]), datasets:[{ label:'Transferido', data: regionMap.map(e=>e[1]), backgroundColor: PALETTE[0] }] }, options:{ ...commonBarOpts, indexAxis:'y' } });
+
+  const bonoMap = topEntries(sumByKey(rows, r=>r._tipoBono, r=>r._fondosTransferidos), 12);
+  ensureChart('chartTipoBono', { type:'bar', data:{ labels: bonoMap.map(e=>e[0]), datasets:[{ label:'Transferido', data: bonoMap.map(e=>e[1]), backgroundColor: PALETTE[1] }] }, options:{ ...commonBarOpts, indexAxis:'y' } });
+
+  const clasMap = topEntries(sumByKey(rows, r=>r._clasificacion, r=>r._fondosTransferidos), 12);
+  ensureChart('chartClasificacion', { type:'doughnut', data:{ labels: clasMap.map(e=>e[0]), datasets:[{ data: clasMap.map(e=>e[1]), backgroundColor: PALETTE }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}, tooltip:{ callbacks:{ label:(c)=> c.label + ': ' + fmtCLP(c.parsed) } } } } });
+
+  const estadoMap = topEntries(sumByKey(rows, r=>r._estadoResolucion, r=>1), 12);
+  ensureChart('chartEstado', { type:'doughnut', data:{ labels: estadoMap.map(e=>e[0]), datasets:[{ data: estadoMap.map(e=>e[1]), backgroundColor: PALETTE.slice().reverse() }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}, tooltip:{ callbacks:{ label:(c)=> c.label + ': ' + c.parsed + ' mov.' } } } } });
+
+  const monthMap = new Map();
+  rows.forEach(r => { const d = r._fechaTransferencia; if (!d) return; const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); monthMap.set(key, (monthMap.get(key)||0) + r._fondosTransferidos); });
+  const monthKeys = [...monthMap.keys()].sort();
+  const monthLabels = monthKeys.map(k => { const [y,m] = k.split('-'); return new Date(Number(y), Number(m)-1, 1).toLocaleDateString('es-CL',{month:'short', year:'2-digit'}); });
+  ensureChart('chartEvolucion', { type:'line', data:{ labels: monthLabels, datasets:[{ label:'Fondos transferidos', data: monthKeys.map(k=>monthMap.get(k)), borderColor: PALETTE[0], backgroundColor:'rgba(37,99,235,.15)', fill:true, tension:.25 }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=> fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } } } });
+
+  const compMap = new Map();
+  rows.forEach(r => { const k = r._region; if (!compMap.has(k)) compMap.set(k, {aprobado:0, transferido:0, pendiente:0}); const o = compMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; o.pendiente += r._fondosPorTransferir; });
+  const compTop = [...compMap.entries()].sort((a,b)=>b[1].aprobado-a[1].aprobado).slice(0,8);
+  ensureChart('chartComparacion', { type:'bar', data:{ labels: compTop.map(e=>e[0]), datasets:[ { label:'Aprobado', data: compTop.map(e=>e[1].aprobado), backgroundColor: PALETTE[3] }, { label:'Transferido', data: compTop.map(e=>e[1].transferido), backgroundColor: PALETTE[1] }, { label:'Pendiente', data: compTop.map(e=>e[1].pendiente), backgroundColor: PALETTE[2] } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } } } });
+
+  const instMap = topEntries(sumByKey(rows, r=>r._institucion, r=>r._fondosTransferidos), 10);
+  ensureChart('chartInstitucion', { type:'bar', data:{ labels: instMap.map(e=>e[0]), datasets:[{ label:'Transferido', data: instMap.map(e=>e[1]), backgroundColor: PALETTE[4] }] }, options:{ ...commonBarOpts, indexAxis:'y' } });
+
+  const analMap = topEntries(sumByKey(rows, r=>r._analista, r=>r._fondosTransferidos), 10);
+  ensureChart('chartAnalista', { type:'bar', data:{ labels: analMap.map(e=>e[0]), datasets:[{ label:'Transferido', data: analMap.map(e=>e[1]), backgroundColor: PALETTE[5] }] }, options:{ ...commonBarOpts, indexAxis:'y' } });
+
+  const evMap = sumByKey(rows, r => { const y = r._fechaEmergencia ? r._fechaEmergencia.getFullYear() : '?'; return r._tipoEmergencia + ' (' + y + ')'; }, r=>r._fondosTransferidos);
+  const evTop = topEntries(evMap, 10);
+  ensureChart('chartEventos', { type:'bar', data:{ labels: evTop.map(e=>e[0]), datasets:[{ label:'Transferido', data: evTop.map(e=>e[1]), backgroundColor: PALETTE[6] }] }, options:{ ...commonBarOpts, indexAxis:'y' } });
+}
+
+/* ---------------- Table ---------------- */
+function renderTable(rows){
+  const data = rows.map(r => ([
+    r._idx, r['FECHA EMERGENCIA'] || '—', r._clasificacion, r._tipoEmergencia, r._region, r['COMUNA'] || '—',
+    r._institucion, r._tipoBono, r['NÚMERO RESOLUCIÓN'] || '—', r._estadoResolucion, r['FECHA TRANSFERENCIA'] || '—',
+    r._fondosTransferidos, r._fondosPorTransferir, r._analista
+  ]));
+  const columns = [
+    { name:'idx', hidden:true },
+    { name:'Fecha emergencia' }, { name:'Clasificación' }, { name:'Tipo emergencia' }, { name:'Región' }, { name:'Comuna' },
+    { name:'Institución pagadora' }, { name:'Tipo de bono' }, { name:'N° resolución' },
+    { name:'Estado', formatter: (cell) => gridjs.html('<span class="badge ' + (cell==='Totalmente Tramitada' ? 'ok' : 'pending') + '">' + cell + '</span>') },
+    { name:'Fecha transferencia' },
+    { name:'Fondos transferidos', formatter: (cell) => fmtCLP(cell) },
+    { name:'Fondos por transferir', formatter: (cell) => fmtCLP(cell) },
+    { name:'Analista' },
+    { name:'Detalle', formatter: (_, row) => gridjs.html('<button class="detail-btn" onclick="openModal(' + row.cells[0].data + ')">Ver</button>') }
+  ];
+  if (TABLE){ TABLE.updateConfig({ data }).forceRender(); }
+  else { TABLE = new gridjs.Grid({ columns, data, search:true, sort:true, pagination:{ limit:15 }, className:{ table:'gridjs-table' } }).render(document.getElementById('tableRoot')); }
+}
+
+/* ---------------- Modal ---------------- */
+function openModal(idx){
+  const r = ALL_ROWS.find(x => x._idx === idx);
+  if (!r) return;
+  document.getElementById('modalTitle').textContent = r._tipoEmergencia + ' — ' + r._region;
+  document.getElementById('modalSub').textContent = 'Oficio N° ' + (r['NÚMERO OFICIO SOLICITUD']||'—') + ' · Resolución N° ' + (r['NÚMERO RESOLUCIÓN']||'—') + ' (' + (r['TIPO DE RESOLUCIÓN']||'—') + ')';
+  const rowsHtml = [
+    ['Clasificación', r._clasificacion], ['Institución pagadora', r._institucion],
+    ['Comuna / Provincia', (r['COMUNA']||'—') + ' / ' + (r['PROVINCIA']||'—')], ['Tipo de bono', r._tipoBono],
+    ['Acción implementada', r['ACCIÓN IMPLEMENTADA']||'—'], ['Estado movimiento', r['ESTADO MOVIMIENTO']||'—'],
+    ['Estado resolución', r._estadoResolucion], ['Fecha emergencia', r['FECHA EMERGENCIA']||'—'],
+    ['Fecha oficio solicitud', r['FECHA OFICIO SOLICITUD']||'—'], ['Fecha resolución', r['FECHA RESOLUCIÓN']||'—'],
+    ['Fecha transferencia', r['FECHA TRANSFERENCIA']||'—'], ['Monto oficio solicitud', fmtCLP(r._montoOficio)],
+    ['Monto resolución', fmtCLP(r._montoResolucion)], ['Fondos aprobados', fmtCLP(r._fondosAprobados)],
+    ['Fondos transferidos', fmtCLP(r._fondosTransferidos)], ['Fondos por transferir', fmtCLP(r._fondosPorTransferir)],
+    ['Imputación presupuestaria', r['IMPUTACIÓN PRESUPUESTARIA']||'—'], ['Año presupuestario', r['AÑO PRESUPUESTARIO']||'—'],
+    ['Detalle presupuesto', r._presupuesto], ['Glosa transferencia', r['GLOSA TRANSFERENCIA']||'—'], ['Analista', r._analista]
+  ].map(([k,v]) => '<div class="row"><span class="k">' + k + '</span><span class="v">' + (v||'—') + '</span></div>').join('');
+  document.getElementById('modalBody').innerHTML = rowsHtml + '<div class="finalidad"><b>Finalidad:</b><br>' + (r['FINALIDAD']||'—') + '</div>';
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal(){ document.getElementById('modalOverlay').classList.remove('open'); }
+document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') closeModal(); });
+
+/* ---------------- Orchestrator ---------------- */
+function renderAll(){ renderKPIs(FILTERED); renderCharts(FILTERED); renderTable(FILTERED); }
+
+['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => {
+  document.getElementById(id).addEventListener('change', applyFilters);
+});
+let searchTimer;
+document.getElementById('fSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilters, 250); });
+document.getElementById('btnClear').addEventListener('click', () => {
+  ['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => document.getElementById(id).value = '__all__');
+  document.getElementById('fSearch').value = '';
+  applyFilters();
+});
+
+loadData();
+</script>
+</body>
+</html>
