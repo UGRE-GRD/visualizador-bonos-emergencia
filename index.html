@@ -78,7 +78,7 @@
       <p>Seguimiento de solicitudes, resoluciones y transferencias de fondos para bonos de emergencia — datos en vivo desde Google Sheets.</p>
     </div>
     <div class="meta-box">
-      <div><b id="metaCount">—</b> movimientos cargados</div>
+      <div><b id="metaCount">—</b> líneas cargadas</div>
       <div>Periodo: <b id="metaRange">—</b></div>
       <div class="status-line"><span class="dot loading" id="statusDot"></span><span id="statusText">Cargando datos…</span></div>
       <div><button class="refresh-btn" onclick="loadData()">Actualizar ahora</button></div>
@@ -108,10 +108,10 @@
       <div class="kpi accent"><div class="label">Fondos aprobados</div><div class="value" id="kpiAprobado">—</div><div class="sub">Comprometido en resoluciones</div></div>
       <div class="kpi warn"><div class="label">Fondos por transferir</div><div class="value" id="kpiPendiente">—</div><div class="sub">Pendiente de giro</div></div>
       <div class="kpi"><div class="label">% Ejecución</div><div class="value" id="kpiEjecucion">—</div><div class="sub">Transferido / Aprobado</div></div>
-      <div class="kpi"><div class="label">N° movimientos</div><div class="value" id="kpiMovimientos">—</div><div class="sub">Filas de la tabla</div></div>
+      <div class="kpi"><div class="label">N° resoluciones</div><div class="value" id="kpiMovimientos">—</div><div class="sub">Documentos de resolución únicos (ID DOC RESOLUCIÓN)</div></div>
       <div class="kpi"><div class="label">N° oficios / solicitudes</div><div class="value" id="kpiOficios">—</div><div class="sub">Documentos únicos</div></div>
-      <div class="kpi"><div class="label">Regiones involucradas</div><div class="value" id="kpiRegiones">—</div><div class="sub">Con al menos un movimiento</div></div>
-      <div class="kpi"><div class="label">Monto promedio</div><div class="value" id="kpiPromedio">—</div><div class="sub">Por movimiento transferido</div></div>
+      <div class="kpi"><div class="label">Regiones involucradas</div><div class="value" id="kpiRegiones">—</div><div class="sub">Con al menos una resolución</div></div>
+      <div class="kpi"><div class="label">Monto promedio</div><div class="value" id="kpiPromedio">—</div><div class="sub">Por resolución transferida</div></div>
     </div>
 
     <div class="charts-grid">
@@ -128,6 +128,7 @@
 
     <div class="table-section">
       <h3>Detalle de movimientos</h3>
+      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">Cada fila es una línea de transferencia (una resolución puede generar más de una línea, por ejemplo cuando distribuye fondos a varias regiones). Los KPIs de "N° resoluciones" cuentan documentos de resolución únicos, no líneas.</p>
       <div id="tableRoot"></div>
     </div>
   </div>
@@ -371,12 +372,15 @@ function applyFilters(){
 }
 
 /* ---------------- KPIs ---------------- */
+function resolutionKey(r){ return r['ID DOC RESOLUCIÓN'] ? r['ID DOC RESOLUCIÓN'] : ('row-' + r._idx); }
+function distinctCount(rows, keyFn){ return new Set(rows.map(keyFn)).size; }
+
 function renderKPIs(rows){
   const transferido = rows.reduce((s,r)=>s+r._fondosTransferidos,0);
   const aprobado = rows.reduce((s,r)=>s+r._fondosAprobados,0);
   const pendiente = rows.reduce((s,r)=>s+r._fondosPorTransferir,0);
   const ejecucion = aprobado > 0 ? (transferido/aprobado*100) : 0;
-  const nMov = rows.length;
+  const nMov = distinctCount(rows, resolutionKey);
   const nOficios = new Set(rows.map(r=>r['ID DOC OFICIO SOLICITUD'])).size;
   const nRegiones = new Set(rows.map(r=>r._region)).size;
   const promedio = nMov > 0 ? transferido/nMov : 0;
@@ -397,9 +401,10 @@ function renderKPIs(rows){
   const pendientes = rows.filter(r => r._estadoResolucion && r._estadoResolucion !== 'Totalmente Tramitada');
   const banner = document.getElementById('pendingBanner');
   if (pendientes.length > 0){
+    const nPendRes = distinctCount(pendientes, resolutionKey);
     const montoPend = pendientes.reduce((s,r)=>s+r._fondosPorTransferir,0);
     banner.style.display = 'block';
-    banner.innerHTML = '⚠️ <b>' + pendientes.length + ' movimiento(s)</b> aún no están "Totalmente Tramitada", por un total pendiente de transferir de <b>' + fmtCLP(montoPend) + '</b>.';
+    banner.innerHTML = '⚠️ <b>' + nPendRes + ' resolución(es)</b> aún no están "Totalmente Tramitada", por un total pendiente de transferir de <b>' + fmtCLP(montoPend) + '</b>.';
   } else { banner.style.display = 'none'; }
 }
 
@@ -433,8 +438,10 @@ function renderCharts(rows){
   const clasMap = topEntries(sumByKey(rows, r=>r._clasificacion, r=>r._fondosTransferidos), 12);
   ensureChart('chartClasificacion', { type:'doughnut', data:{ labels: clasMap.map(e=>e[0]), datasets:[{ data: clasMap.map(e=>e[1]), backgroundColor: PALETTE }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}, tooltip:{ callbacks:{ label:(c)=> c.label + ': ' + fmtCLP(c.parsed) } } } } });
 
-  const estadoMap = topEntries(sumByKey(rows, r=>r._estadoResolucion, r=>1), 12);
-  ensureChart('chartEstado', { type:'doughnut', data:{ labels: estadoMap.map(e=>e[0]), datasets:[{ data: estadoMap.map(e=>e[1]), backgroundColor: PALETTE.slice().reverse() }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}, tooltip:{ callbacks:{ label:(c)=> c.label + ': ' + c.parsed + ' mov.' } } } } });
+  const estadoResMap = new Map();
+  rows.forEach(r => { const g = r._estadoResolucion || 'Sin dato'; if (!estadoResMap.has(g)) estadoResMap.set(g, new Set()); estadoResMap.get(g).add(resolutionKey(r)); });
+  const estadoMap = topEntries(new Map([...estadoResMap.entries()].map(([k,v])=>[k, v.size])), 12);
+  ensureChart('chartEstado', { type:'doughnut', data:{ labels: estadoMap.map(e=>e[0]), datasets:[{ data: estadoMap.map(e=>e[1]), backgroundColor: PALETTE.slice().reverse() }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}, tooltip:{ callbacks:{ label:(c)=> c.label + ': ' + c.parsed + ' res.' } } } } });
 
   const monthMap = new Map();
   rows.forEach(r => { const d = r._fechaTransferencia; if (!d) return; const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); monthMap.set(key, (monthMap.get(key)||0) + r._fondosTransferidos); });
