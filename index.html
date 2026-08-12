@@ -128,7 +128,7 @@
 
     <div class="table-section">
       <h3>Detalle de movimientos</h3>
-      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">Cada fila es una línea de transferencia (una resolución puede generar más de una línea, por ejemplo cuando distribuye fondos a varias regiones). Los KPIs de "N° resoluciones" cuentan documentos de resolución únicos, no líneas.</p>
+      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">Cada fila es una línea de transferencia (una resolución puede generar más de una línea, por ejemplo cuando distribuye fondos a varias regiones). Los KPIs de "N° resoluciones" cuentan documentos de resolución únicos, no líneas. Los KPIs de montos ($) descartan filas que repiten exactamente el mismo giro (mismo monto, fecha y N°/glosa) registrado en más de una región, para no contar la misma transferencia dos veces.</p>
       <div id="tableRoot"></div>
     </div>
   </div>
@@ -374,11 +374,32 @@ function applyFilters(){
 /* ---------------- KPIs ---------------- */
 function resolutionKey(r){ return r['ID DOC RESOLUCIÓN'] ? r['ID DOC RESOLUCIÓN'] : ('row-' + r._idx); }
 function distinctCount(rows, keyFn){ return new Set(rows.map(keyFn)).size; }
+/* Algunas resoluciones (p.ej. IPS repartiendo un mismo giro entre Ñuble y Biobío) registran la MISMA
+   transferencia/resolución duplicada en dos filas (mismo monto, misma fecha, misma glosa/N° resolución),
+   una por región. Sumar línea a línea duplica esa plata. dedupSum cuenta cada evento una sola vez por
+   resolución, usando (keyFn(r) + monto) como huella del evento. */
+function dedupSum(rows, valueFn, keyFn){
+  const byRes = new Map();
+  rows.forEach(r => { const k = resolutionKey(r); if (!byRes.has(k)) byRes.set(k, []); byRes.get(k).push(r); });
+  let total = 0;
+  byRes.forEach(group => {
+    const seen = new Set();
+    group.forEach(r => {
+      const v = valueFn(r);
+      if (!v) return;
+      const dk = keyFn(r) + '|' + v;
+      if (seen.has(dk)) return;
+      seen.add(dk);
+      total += v;
+    });
+  });
+  return total;
+}
 
 function renderKPIs(rows){
-  const transferido = rows.reduce((s,r)=>s+r._fondosTransferidos,0);
-  const aprobado = rows.reduce((s,r)=>s+r._fondosAprobados,0);
-  const pendiente = rows.reduce((s,r)=>s+r._fondosPorTransferir,0);
+  const transferido = dedupSum(rows, r=>r._fondosTransferidos, r=>r['FECHA TRANSFERENCIA']+'|'+r['GLOSA TRANSFERENCIA']);
+  const aprobado = dedupSum(rows, r=>r._fondosAprobados, r=>r['FECHA RESOLUCIÓN']+'|'+r['NÚMERO RESOLUCIÓN']);
+  const pendiente = dedupSum(rows, r=>r._fondosPorTransferir, r=>r['FECHA RESOLUCIÓN']+'|'+r['NÚMERO RESOLUCIÓN']);
   const ejecucion = aprobado > 0 ? (transferido/aprobado*100) : 0;
   const nMov = distinctCount(rows, resolutionKey);
   const nOficios = new Set(rows.map(r=>r['ID DOC OFICIO SOLICITUD'])).size;
@@ -402,7 +423,7 @@ function renderKPIs(rows){
   const banner = document.getElementById('pendingBanner');
   if (pendientes.length > 0){
     const nPendRes = distinctCount(pendientes, resolutionKey);
-    const montoPend = pendientes.reduce((s,r)=>s+r._fondosPorTransferir,0);
+    const montoPend = dedupSum(pendientes, r=>r._fondosPorTransferir, r=>r['FECHA RESOLUCIÓN']+'|'+r['NÚMERO RESOLUCIÓN']);
     banner.style.display = 'block';
     banner.innerHTML = '⚠️ <b>' + nPendRes + ' resolución(es)</b> aún no están "Totalmente Tramitada", por un total pendiente de transferir de <b>' + fmtCLP(montoPend) + '</b>.';
   } else { banner.style.display = 'none'; }
