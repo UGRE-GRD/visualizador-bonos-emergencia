@@ -37,6 +37,15 @@
   .filters select, .filters input[type=text]{padding:6px 8px;border-radius:7px;border:1px solid var(--border);font-size:13px;background:#fff;color:var(--text);min-width:150px;}
   .filters button{align-self:flex-end;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:7px 12px;font-size:12.5px;cursor:pointer;color:var(--text);font-weight:600;}
   .filters button:hover{background:#e2e8f0;}
+  .multiselect{position:relative;}
+  .multiselect-btn{padding:6px 8px;border-radius:7px;border:1px solid var(--border);font-size:13px;background:#fff;color:var(--text);min-width:150px;max-width:220px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .multiselect-btn:hover{background:#f8fafc;}
+  .multiselect-btn:after{content:'▾';float:right;color:var(--muted);margin-left:6px;}
+  .multiselect-panel{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:50;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;min-width:230px;max-height:280px;overflow-y:auto;}
+  .multiselect-panel.open{display:block;}
+  .ms-option{display:flex;align-items:center;gap:7px;padding:5px 6px;border-radius:6px;font-size:13px;cursor:pointer;}
+  .ms-option:hover{background:#f1f5f9;}
+  .ms-option input{margin:0;}
   #activeFiltersRow{display:none;flex-wrap:wrap;gap:6px;align-items:center;margin:-8px 0 16px;}
   .filter-chip{background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:999px;padding:4px 10px;font-size:11.5px;cursor:pointer;font-weight:600;display:inline-flex;align-items:center;gap:4px;}
   .filter-chip:hover{background:#e0e7ff;}
@@ -99,7 +108,7 @@
   <div id="pendingBanner"></div>
 
   <div class="filters" id="filtersBar">
-    <div class="grp"><label>Región</label><select id="fRegion"><option value="__all__">Todas</option></select></div>
+    <div class="grp"><label>Región</label><div class="multiselect" id="fRegionMulti"><button type="button" class="multiselect-btn" id="fRegionBtn">Todas</button><div class="multiselect-panel" id="fRegionPanel"></div></div></div>
     <div class="grp"><label>Clasificación</label><select id="fClasificacion"><option value="__all__">Todas</option></select></div>
     <div class="grp"><label>Tipo de bono</label><select id="fTipoBono"><option value="__all__">Todos</option></select></div>
     <div class="grp"><label>Estado resolución</label><select id="fEstado"><option value="__all__">Todos</option></select></div>
@@ -181,8 +190,25 @@ let CHARTS = {};
 let TABLE = null;
 let AUTO_TIMER = null;
 
-const FILTER_KEYS = ['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto','fSearch'];
+const FILTER_KEYS = ['fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto','fSearch'];
 const LS_KEY = 'bonosDashboardFilters_v1';
+/* Región: multi-selección. Arreglo vacío = todas las regiones (sin filtro). */
+let SELECTED_REGIONS = [];
+let REGION_OPTIONS = [];
+/* Orden geográfico de Chile, de norte a sur. Se busca por coincidencia de texto (no exige nombre exacto). */
+const REGION_ORDER_KEYWORDS = [
+  'Arica','Tarapacá','Tarapaca','Antofagasta','Atacama','Coquimbo','Valparaíso','Valparaiso',
+  'Metropolitana','O\'Higgins','Higgins','Maule','Ñuble','Nuble','Biobío','Bío Bío','Bio Bio','Biobio',
+  'Araucanía','Araucania','Los Ríos','Los Rios','Los Lagos','Aysén','Aysen','Magallanes'
+];
+function regionSortIndex(region){
+  if (!region) return 999;
+  const idx = REGION_ORDER_KEYWORDS.findIndex(k => region.toLowerCase().includes(k.toLowerCase()));
+  return idx === -1 ? 999 : idx;
+}
+function sortRegionsGeo(arr){
+  return [...arr].sort((a,b) => { const ia = regionSortIndex(a), ib = regionSortIndex(b); if (ia !== ib) return ia - ib; return a.localeCompare(b,'es'); });
+}
 /* Filtros adicionales que se activan al hacer clic en un gráfico y no tienen un <select> propio
    (institución, evento de emergencia, mes). 'evento' se guarda como 'TIPO|AÑO'. */
 let EXTRA_FILTERS = { institucion: null, evento: null, mes: null };
@@ -328,6 +354,7 @@ function setStatus(kind, text){
 
 /* ---------------- Filters ---------------- */
 function uniqueSorted(arr){ return [...new Set(arr.filter(v => v))].sort((a,b)=>a.localeCompare(b,'es')); }
+function uniqueRegions(arr){ return [...new Set(arr.filter(v => v))]; }
 function fillSelect(id, values){
   const sel = document.getElementById(id);
   const current = sel.value;
@@ -335,8 +362,50 @@ function fillSelect(id, values){
   values.forEach(v => { const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt); });
   if (values.includes(current)) sel.value = current;
 }
+
+/* ---- Filtro de Región (multi-selección, orden geográfico norte a sur) ---- */
+function populateRegionOptions(){
+  REGION_OPTIONS = sortRegionsGeo(uniqueRegions(ALL_ROWS.map(r=>r._region)));
+  renderRegionPanel();
+}
+function renderRegionPanel(){
+  const panel = document.getElementById('fRegionPanel');
+  if (!panel) return;
+  panel.innerHTML = REGION_OPTIONS.map(r => {
+    const checked = SELECTED_REGIONS.includes(r) ? 'checked' : '';
+    const safe = r.replace(/"/g,'&quot;');
+    return '<label class="ms-option"><input type="checkbox" value="' + safe + '" ' + checked + ' onchange="onRegionCheckboxChange(this)"> ' + r + '</label>';
+  }).join('');
+  updateRegionButtonLabel();
+}
+function onRegionCheckboxChange(input){
+  const v = input.value;
+  if (input.checked){ if (!SELECTED_REGIONS.includes(v)) SELECTED_REGIONS.push(v); }
+  else { SELECTED_REGIONS = SELECTED_REGIONS.filter(x => x !== v); }
+  updateRegionButtonLabel();
+  applyFilters();
+}
+function updateRegionButtonLabel(){
+  const btn = document.getElementById('fRegionBtn');
+  if (!btn) return;
+  if (SELECTED_REGIONS.length === 0) btn.textContent = 'Todas';
+  else if (SELECTED_REGIONS.length === 1) btn.textContent = SELECTED_REGIONS[0];
+  else btn.textContent = SELECTED_REGIONS.length + ' regiones';
+}
+function syncRegionUI(){
+  const panel = document.getElementById('fRegionPanel');
+  if (panel){ panel.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = SELECTED_REGIONS.includes(cb.value); }); }
+  updateRegionButtonLabel();
+}
+function toggleRegionFilter(value){
+  if (SELECTED_REGIONS.length === 1 && SELECTED_REGIONS[0] === value){ SELECTED_REGIONS = []; }
+  else { SELECTED_REGIONS = [value]; }
+  syncRegionUI();
+  applyFilters();
+}
+
 function populateFilters(){
-  fillSelect('fRegion', uniqueSorted(ALL_ROWS.map(r=>r._region)));
+  populateRegionOptions();
   fillSelect('fClasificacion', uniqueSorted(ALL_ROWS.map(r=>r._clasificacion)));
   fillSelect('fTipoBono', uniqueSorted(ALL_ROWS.map(r=>r._tipoBono)));
   fillSelect('fEstado', uniqueSorted(ALL_ROWS.map(r=>r._estadoResolucion)));
@@ -345,6 +414,7 @@ function populateFilters(){
 }
 function saveFilters(){
   const state = {}; FILTER_KEYS.forEach(k => state[k] = document.getElementById(k).value);
+  state.selectedRegions = SELECTED_REGIONS;
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
 }
 function restoreFilters(){
@@ -359,10 +429,13 @@ function restoreFilters(){
         if (optExists) el.value = state[k];
       }
     });
+    if (Array.isArray(state.selectedRegions)){
+      SELECTED_REGIONS = state.selectedRegions.filter(v => ALL_ROWS.some(r => r._region === v));
+    }
+    syncRegionUI();
   }catch(e){}
 }
 function applyFilters(){
-  const region = document.getElementById('fRegion').value;
   const clasificacion = document.getElementById('fClasificacion').value;
   const tipoBono = document.getElementById('fTipoBono').value;
   const estado = document.getElementById('fEstado').value;
@@ -371,7 +444,7 @@ function applyFilters(){
   const search = document.getElementById('fSearch').value.trim().toLowerCase();
 
   FILTERED = ALL_ROWS.filter(r => {
-    if (region !== '__all__' && r._region !== region) return false;
+    if (SELECTED_REGIONS.length > 0 && !SELECTED_REGIONS.includes(r._region)) return false;
     if (clasificacion !== '__all__' && r._clasificacion !== clasificacion) return false;
     if (tipoBono !== '__all__' && r._tipoBono !== tipoBono) return false;
     if (estado !== '__all__' && r._estadoResolucion !== estado) return false;
@@ -408,8 +481,10 @@ function toggleExtraFilter(dim, value){
   applyFilters();
 }
 function clearAllFilters(){
-  ['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => document.getElementById(id).value = '__all__');
+  ['fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => document.getElementById(id).value = '__all__');
   document.getElementById('fSearch').value = '';
+  SELECTED_REGIONS = [];
+  syncRegionUI();
   EXTRA_FILTERS = { institucion: null, evento: null, mes: null };
   applyFilters();
 }
@@ -426,6 +501,10 @@ function dimPalette(paletteArr, keys, activeKey){
   if (!activeKey) return keys.map((k,i)=>paletteArr[i%paletteArr.length]);
   return keys.map((k,i) => k===activeKey ? paletteArr[i%paletteArr.length] : withAlpha(paletteArr[i%paletteArr.length], 0.25));
 }
+function dimSeriesMulti(baseColor, keys, activeKeys){
+  if (!activeKeys || activeKeys.length === 0) return keys.map(()=>baseColor);
+  return keys.map(k => activeKeys.includes(k) ? baseColor : withAlpha(baseColor, 0.22));
+}
 function chartClickHandler(onIndex){
   return function(evt, _els, chart){
     const els = chart.getElementsAtEventForMode(evt, 'nearest', {intersect:true}, false);
@@ -440,7 +519,10 @@ function hoverCursor(evt, _els, chart){
 function renderActiveFilterChips(){
   const box = document.getElementById('activeFiltersRow');
   const chips = [];
-  [['fRegion','Región'],['fClasificacion','Clasificación'],['fTipoBono','Tipo de bono'],['fEstado','Estado resolución'],['fAnalista','Analista'],['fPresupuesto','Presupuesto']].forEach(([id,label]) => {
+  SELECTED_REGIONS.forEach(v => {
+    chips.push({ label: 'Región: ' + v, clear: () => { SELECTED_REGIONS = SELECTED_REGIONS.filter(x => x !== v); syncRegionUI(); applyFilters(); } });
+  });
+  [['fClasificacion','Clasificación'],['fTipoBono','Tipo de bono'],['fEstado','Estado resolución'],['fAnalista','Analista'],['fPresupuesto','Presupuesto']].forEach(([id,label]) => {
     const v = document.getElementById(id).value;
     if (v !== '__all__') chips.push({ label: label + ': ' + v, clear: () => { document.getElementById(id).value = '__all__'; applyFilters(); } });
   });
@@ -535,7 +617,7 @@ const commonBarOpts = {
   scales:{ x:{ ticks:{ callback:(v)=> typeof v==='number' ? fmtCLPShort(v) : v } }, y:{} }
 };
 function renderCharts(rows){
-  const activeRegion = document.getElementById('fRegion').value === '__all__' ? null : document.getElementById('fRegion').value;
+  const activeRegions = SELECTED_REGIONS;
   const activeTipoBono = document.getElementById('fTipoBono').value === '__all__' ? null : document.getElementById('fTipoBono').value;
   const activeClasificacion = document.getElementById('fClasificacion').value === '__all__' ? null : document.getElementById('fClasificacion').value;
   const activeEstado = document.getElementById('fEstado').value === '__all__' ? null : document.getElementById('fEstado').value;
@@ -552,7 +634,14 @@ function renderCharts(rows){
     const o = evGroups.get(key);
     o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos;
   });
-  const evEntries = [...evGroups.entries()].sort((a,b)=>b[1].transferido-a[1].transferido);
+  const evEntries = [...evGroups.entries()].sort((a,b)=>{
+    const [tipoA, yearA] = a[0].split('|');
+    const [tipoB, yearB] = b[0].split('|');
+    const yA = yearA === '?' ? -Infinity : Number(yearA);
+    const yB = yearB === '?' ? -Infinity : Number(yearB);
+    if (yA !== yB) return yA - yB;
+    return tipoA.localeCompare(tipoB, 'es');
+  });
   const evKeys = evEntries.map(e=>e[0]);
   const evLabels = evEntries.map(e=>e[1].label);
   ensureChart('chartEventos', {
@@ -567,7 +656,7 @@ function renderCharts(rows){
 
   const regionMap = topEntries(sumByKey(rows, r=>r._region, r=>r._fondosTransferidos), 12);
   const regionLabels = regionMap.map(e=>e[0]);
-  ensureChart('chartRegion', { type:'bar', data:{ labels: regionLabels, datasets:[{ label:'Transferido', data: regionMap.map(e=>e[1]), backgroundColor: dimSeries(PALETTE[0], regionLabels, activeRegion) }] }, options:{ ...commonBarOpts, indexAxis:'y', onClick: chartClickHandler((idx, chart) => toggleSelectFilter('fRegion', chart.data.labels[idx])), onHover: hoverCursor } });
+  ensureChart('chartRegion', { type:'bar', data:{ labels: regionLabels, datasets:[{ label:'Transferido', data: regionMap.map(e=>e[1]), backgroundColor: dimSeriesMulti(PALETTE[0], regionLabels, activeRegions) }] }, options:{ ...commonBarOpts, indexAxis:'y', onClick: chartClickHandler((idx, chart) => toggleRegionFilter(chart.data.labels[idx])), onHover: hoverCursor } });
 
   const bonoMap = topEntries(sumByKey(rows, r=>r._tipoBono, r=>r._fondosTransferidos), 12);
   const bonoLabels = bonoMap.map(e=>e[0]);
@@ -597,7 +686,7 @@ function renderCharts(rows){
   rows.forEach(r => { const k = r._region; if (!compMap.has(k)) compMap.set(k, {aprobado:0, transferido:0, pendiente:0}); const o = compMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; o.pendiente += r._fondosPorTransferir; });
   const compTop = [...compMap.entries()].sort((a,b)=>b[1].aprobado-a[1].aprobado).slice(0,8);
   const compLabels = compTop.map(e=>e[0]);
-  ensureChart('chartComparacion', { type:'bar', data:{ labels: compLabels, datasets:[ { label:'Aprobado', data: compTop.map(e=>e[1].aprobado), backgroundColor: dimSeries(PALETTE[3], compLabels, activeRegion) }, { label:'Transferido', data: compTop.map(e=>e[1].transferido), backgroundColor: dimSeries(PALETTE[1], compLabels, activeRegion) }, { label:'Pendiente', data: compTop.map(e=>e[1].pendiente), backgroundColor: dimSeries(PALETTE[2], compLabels, activeRegion) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx, chart) => toggleSelectFilter('fRegion', chart.data.labels[idx])), onHover: hoverCursor } });
+  ensureChart('chartComparacion', { type:'bar', data:{ labels: compLabels, datasets:[ { label:'Aprobado', data: compTop.map(e=>e[1].aprobado), backgroundColor: dimSeriesMulti(PALETTE[3], compLabels, activeRegions) }, { label:'Transferido', data: compTop.map(e=>e[1].transferido), backgroundColor: dimSeriesMulti(PALETTE[1], compLabels, activeRegions) }, { label:'Pendiente', data: compTop.map(e=>e[1].pendiente), backgroundColor: dimSeriesMulti(PALETTE[2], compLabels, activeRegions) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx, chart) => toggleRegionFilter(chart.data.labels[idx])), onHover: hoverCursor } });
 
   const instMap = topEntries(sumByKey(rows, r=>r._institucion, r=>r._fondosTransferidos), 10);
   const instLabels = instMap.map(e=>e[0]);
@@ -657,12 +746,18 @@ document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e
 /* ---------------- Orchestrator ---------------- */
 function renderAll(){ renderKPIs(FILTERED); renderCharts(FILTERED); renderTable(FILTERED); renderActiveFilterChips(); }
 
-['fRegion','fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => {
+['fClasificacion','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => {
   document.getElementById(id).addEventListener('change', applyFilters);
 });
 let searchTimer;
 document.getElementById('fSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilters, 250); });
 document.getElementById('btnClear').addEventListener('click', clearAllFilters);
+
+document.getElementById('fRegionBtn').addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('fRegionPanel').classList.toggle('open'); });
+document.addEventListener('click', (e) => {
+  const ms = document.getElementById('fRegionMulti');
+  if (ms && !ms.contains(e.target)) document.getElementById('fRegionPanel').classList.remove('open');
+});
 
 loadData();
 </script>
