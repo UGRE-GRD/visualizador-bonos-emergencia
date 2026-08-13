@@ -174,15 +174,10 @@
 
 <script>
 const SHEET_ID = '1ex-GvI8Fb-hdctSe_qr_eNA5W_GLWNI6ql3kDYa8_fA';
-const COLS_NAMES = [
-  'CLASIFICACIÓN','FECHA EMERGENCIA','ID DOC OFICIO SOLICITUD','NÚMERO OFICIO SOLICITUD','FECHA OFICIO SOLICITUD',
-  'FECHA RECEPCIÓN OFICIO SOLICITUD','INSTITUCIÓN PAGADORA','TIPO DE EMERGENCIA','MONTO OFICIO SOLICITUD','REGIÓN',
-  'PROVINCIA','COMUNA','FINALIDAD','ACCIÓN IMPLEMENTADA','TIPO DE BONO','ESTADO MOVIMIENTO','FECHA MOVIMIENTO',
-  'ANALISTA','ID DOC RESOLUCIÓN','TIPO DE RESOLUCIÓN','NÚMERO RESOLUCIÓN','FECHA RESOLUCIÓN','IMPUTACIÓN PRESUPUESTARIA',
-  'ESTADO RESOLUCIÓN','MONTO RESOLUCIÓN','GLOSA TRANSFERENCIA','FECHA TRANSFERENCIA','FONDOS APROBADOS',
-  'FONDOS TRANSFERIDOS','FONDOS POR TRANSFERIR','AÑO PRESUPUESTARIO','DETALLE PRESUPUESTO'
-];
-const PALETTE = ['#2563eb','#0d9488','#f59e0b','#dc2626','#7c3aed','#059669','#db2777','#0891b2','#65a30d','#ea580c','#4f46e5','#be123c'];
+/* Nota: las columnas ya NO se leen por posición fija. Cada carga usa el nombre real de columna
+   (json.table.cols[i].label) que entrega Google Sheets, así que si se agrega, elimina o reordena
+   una columna en la planilla, el dashboard sigue leyendo los datos correctos por nombre. */
+const PALETTE =['#2563eb','#0d9488','#f59e0b','#dc2626','#7c3aed','#059669','#db2777','#0891b2','#65a30d','#ea580c','#4f46e5','#be123c'];
 
 let ALL_ROWS = [];
 let FILTERED = [];
@@ -195,7 +190,6 @@ const LS_KEY = 'bonosDashboardFilters_v1';
 /* Región: multi-selección. Arreglo vacío = todas las regiones (sin filtro). */
 let SELECTED_REGIONS = [];
 let REGION_OPTIONS = [];
-/* Orden geográfico de Chile, de norte a sur. Se busca por coincidencia de texto (no exige nombre exacto). */
 const REGION_ORDER_KEYWORDS = [
   'Arica','Tarapacá','Tarapaca','Antofagasta','Atacama','Coquimbo','Valparaíso','Valparaiso',
   'Metropolitana','O\'Higgins','Higgins','Maule','Ñuble','Nuble','Biobío','Bío Bío','Bio Bio','Biobio',
@@ -296,13 +290,16 @@ async function loadData(){
     }
     const cols = json.table.cols || [];
     const rowsJson = json.table.rows || [];
+    // Nombre real de cada columna según la planilla en este momento (no una posición fija).
+    const colLabels = cols.map(c => (c && c.label ? String(c.label).trim() : ''));
 
     const objs = rowsJson.map((rowObj) => {
       const cells = rowObj.c || [];
       const obj = {};
-      COLS_NAMES.forEach((name, i) => {
+      colLabels.forEach((label, i) => {
+        if (!label) return;
         const colType = cols[i] ? cols[i].type : 'string';
-        obj[name] = cellToDisplayString(cells[i], colType).trim();
+        obj[label] = cellToDisplayString(cells[i], colType).trim();
       });
       return obj;
     }).filter(o => o['CLASIFICACIÓN']);
@@ -635,11 +632,9 @@ function renderCharts(rows){
     o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos;
   });
   const evEntries = [...evGroups.entries()].sort((a,b)=>{
-    const [tipoA, yearA] = a[0].split('|');
-    const [tipoB, yearB] = b[0].split('|');
-    const yA = yearA === '?' ? -Infinity : Number(yearA);
-    const yB = yearB === '?' ? -Infinity : Number(yearB);
-    if (yA !== yB) return yA - yB;
+    const [tipoA, yearA] = a[0].split('|'); const [tipoB, yearB] = b[0].split('|');
+    const yA = yearA === '?' ? -Infinity : Number(yearA); const yB = yearB === '?' ? -Infinity : Number(yearB);
+    if (yA !== yB) return yB - yA;
     return tipoA.localeCompare(tipoB, 'es');
   });
   const evKeys = evEntries.map(e=>e[0]);
