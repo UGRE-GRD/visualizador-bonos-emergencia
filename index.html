@@ -134,7 +134,7 @@
     <p class="interactive-hint">💡 Haz clic en una barra, segmento o punto de cualquier gráfico para filtrar el resto del dashboard. Vuelve a hacer clic para quitar ese filtro.</p>
 
     <div class="chart-card eventos-card">
-      <h3>Eventos de emergencia — Top 10 más recientes (Fondos aprobados vs. transferidos)</h3>
+      <h3>Eventos de emergencia — Top 10 por fondo aprobado (Fondos aprobados vs. transferidos)</h3>
       <div class="chart-holder" id="eventosHolder" style="height:340px;"><canvas id="chartEventos"></canvas></div>
     </div>
 
@@ -356,6 +356,26 @@ function setStatus(kind, text){
 /* ---------------- Filters ---------------- */
 function uniqueSorted(arr){ return [...new Set(arr.filter(v => v))].sort((a,b)=>a.localeCompare(b,'es')); }
 function uniqueRegions(arr){ return [...new Set(arr.filter(v => v))]; }
+/* Nombres de evento (columna H) únicos, ordenados por fecha real de emergencia: del evento más
+   reciente al más antiguo (empate alfabético). Se usa para el filtro "Evento". */
+function uniqueEventsByRecency(rows){
+  const maxDate = new Map();
+  rows.forEach(r => {
+    const key = r._nombreEvento;
+    if (!key) return;
+    if (!maxDate.has(key)) maxDate.set(key, r._fechaEmergencia || null);
+    else {
+      const cur = maxDate.get(key);
+      if (r._fechaEmergencia && (!cur || r._fechaEmergencia > cur)) maxDate.set(key, r._fechaEmergencia);
+    }
+  });
+  return [...maxDate.entries()].sort((a,b) => {
+    const fa = a[1] ? a[1].getTime() : -Infinity;
+    const fb = b[1] ? b[1].getTime() : -Infinity;
+    if (fa !== fb) return fb - fa;
+    return a[0].localeCompare(b[0], 'es');
+  }).map(e => e[0]);
+}
 function fillSelect(id, values){
   const sel = document.getElementById(id);
   const current = sel.value;
@@ -408,7 +428,7 @@ function toggleRegionFilter(value){
 function populateFilters(){
   populateRegionOptions();
   fillSelect('fClasificacion', uniqueSorted(ALL_ROWS.map(r=>r._clasificacion)));
-  fillSelect('fEvento', uniqueSorted(ALL_ROWS.map(r=>r._nombreEvento)));
+  fillSelect('fEvento', uniqueEventsByRecency(ALL_ROWS));
   fillSelect('fTipoBono', uniqueSorted(ALL_ROWS.map(r=>r._tipoBono)));
   fillSelect('fEstado', uniqueSorted(ALL_ROWS.map(r=>r._estadoResolucion)));
   fillSelect('fAnalista', uniqueSorted(ALL_ROWS.map(r=>r._analista)));
@@ -630,16 +650,15 @@ function renderCharts(rows){
     if (!evGroups.has(key)) evGroups.set(key, { label: key, aprobado:0, transferido:0, fecha: null });
     const o = evGroups.get(key);
     o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos;
-    // Se usa la fecha de emergencia más reciente del grupo (columna B) para ordenar con precisión.
+    // Se usa la fecha de emergencia más reciente del grupo (columna B); se guarda por si se necesita
+    // más adelante, aunque el orden del gráfico se basa en el fondo aprobado, no en la fecha.
     if (r._fechaEmergencia && (!o.fecha || r._fechaEmergencia > o.fecha)) o.fecha = r._fechaEmergencia;
   });
-  // Ordenado por fecha real de emergencia (más nuevo a más antiguo) y limitado a los 10 eventos
-  // más recientes para mantener el gráfico legible; el filtro "Evento" en la barra de filtros permite
-  // seleccionar cualquiera de todos los eventos, no solo los que aparecen en el gráfico.
+  // Ordenado de mayor a menor fondo aprobado y limitado a los 10 eventos con más fondos para
+  // mantener el gráfico legible; el filtro "Evento" en la barra de filtros permite seleccionar
+  // cualquiera de todos los eventos, no solo los que aparecen en el gráfico.
   const evEntries = [...evGroups.entries()].sort((a,b)=>{
-    const fa = a[1].fecha ? a[1].fecha.getTime() : -Infinity;
-    const fb = b[1].fecha ? b[1].fecha.getTime() : -Infinity;
-    if (fa !== fb) return fb - fa;
+    if (b[1].aprobado !== a[1].aprobado) return b[1].aprobado - a[1].aprobado;
     return a[1].label.localeCompare(b[1].label, 'es');
   }).slice(0, 10);
   const evKeys = evEntries.map(e=>e[0]);
