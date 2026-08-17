@@ -323,6 +323,9 @@ async function loadData(){
       row._analista = row['ANALISTA'] || 'Sin analista';
       row._presupuesto = row['DETALLE PRESUPUESTO'] || 'Sin dato';
       row._tipoEmergencia = row['TIPO DE EMERGENCIA'] || 'Sin tipo';
+      // Nombre específico del evento (columna H de la planilla). Si no existe (planillas antiguas
+      // o si se elimina la columna), se usa TIPO DE EMERGENCIA como respaldo.
+      row._nombreEvento = (row['NOMBRE EVENTO'] || row['TIPO DE EMERGENCIA'] || 'Sin nombre').trim();
       return row;
     });
 
@@ -452,11 +455,7 @@ function applyFilters(){
       if (!hay.includes(search)) return false;
     }
     if (EXTRA_FILTERS.institucion && r._institucion !== EXTRA_FILTERS.institucion) return false;
-    if (EXTRA_FILTERS.evento){
-      const [tipo, year] = EXTRA_FILTERS.evento.split('|');
-      const rowYear = r._fechaEmergencia ? String(r._fechaEmergencia.getFullYear()) : '?';
-      if (r._tipoEmergencia !== tipo || rowYear !== year) return false;
-    }
+    if (EXTRA_FILTERS.evento && r._nombreEvento !== EXTRA_FILTERS.evento) return false;
     if (EXTRA_FILTERS.mes){
       const key = r._fechaTransferencia ? (r._fechaTransferencia.getFullYear() + '-' + String(r._fechaTransferencia.getMonth()+1).padStart(2,'0')) : null;
       if (key !== EXTRA_FILTERS.mes) return false;
@@ -525,8 +524,7 @@ function renderActiveFilterChips(){
   });
   if (EXTRA_FILTERS.institucion) chips.push({ label: 'Institución: ' + EXTRA_FILTERS.institucion, clear: () => { EXTRA_FILTERS.institucion = null; applyFilters(); } });
   if (EXTRA_FILTERS.evento){
-    const [tipo, year] = EXTRA_FILTERS.evento.split('|');
-    chips.push({ label: 'Evento: ' + tipo + ' (' + year + ')', clear: () => { EXTRA_FILTERS.evento = null; applyFilters(); } });
+    chips.push({ label: 'Evento: ' + EXTRA_FILTERS.evento, clear: () => { EXTRA_FILTERS.evento = null; applyFilters(); } });
   }
   if (EXTRA_FILTERS.mes) chips.push({ label: 'Mes: ' + EXTRA_FILTERS.mes, clear: () => { EXTRA_FILTERS.mes = null; applyFilters(); } });
 
@@ -625,17 +623,20 @@ function renderCharts(rows){
 
   const evGroups = new Map();
   rows.forEach(r => {
-    const y = r._fechaEmergencia ? r._fechaEmergencia.getFullYear() : '?';
-    const key = r._tipoEmergencia + '|' + y;
-    if (!evGroups.has(key)) evGroups.set(key, { label: r._tipoEmergencia + ' (' + y + ')', aprobado:0, transferido:0 });
+    // El nombre del evento viene de la columna H (NOMBRE EVENTO); ya incluye mes/año, así que
+    // sirve directamente como clave de agrupación.
+    const key = r._nombreEvento;
+    if (!evGroups.has(key)) evGroups.set(key, { label: key, aprobado:0, transferido:0, fecha: null });
     const o = evGroups.get(key);
     o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos;
+    // Se usa la fecha de emergencia más reciente del grupo (columna B) para ordenar con precisión.
+    if (r._fechaEmergencia && (!o.fecha || r._fechaEmergencia > o.fecha)) o.fecha = r._fechaEmergencia;
   });
   const evEntries = [...evGroups.entries()].sort((a,b)=>{
-    const [tipoA, yearA] = a[0].split('|'); const [tipoB, yearB] = b[0].split('|');
-    const yA = yearA === '?' ? -Infinity : Number(yearA); const yB = yearB === '?' ? -Infinity : Number(yearB);
-    if (yA !== yB) return yB - yA;
-    return tipoA.localeCompare(tipoB, 'es');
+    const fa = a[1].fecha ? a[1].fecha.getTime() : -Infinity;
+    const fb = b[1].fecha ? b[1].fecha.getTime() : -Infinity;
+    if (fa !== fb) return fb - fa;
+    return a[1].label.localeCompare(b[1].label, 'es');
   });
   const evKeys = evEntries.map(e=>e[0]);
   const evLabels = evEntries.map(e=>e[1].label);
