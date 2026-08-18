@@ -111,9 +111,9 @@
     <div class="grp"><label>Región</label><div class="multiselect" id="fRegionMulti"><button type="button" class="multiselect-btn" id="fRegionBtn">Todas</button><div class="multiselect-panel" id="fRegionPanel"></div></div></div>
     <div class="grp"><label>Clasificación</label><select id="fClasificacion"><option value="__all__">Todas</option></select></div>
     <div class="grp"><label>Evento</label><select id="fEvento"><option value="__all__">Todos</option></select></div>
+    <div class="grp"><label>Año emergencia</label><select id="fAnioEmergencia"><option value="__all__">Todos</option></select></div>
     <div class="grp"><label>Tipo de bono</label><select id="fTipoBono"><option value="__all__">Todos</option></select></div>
     <div class="grp"><label>Estado resolución</label><select id="fEstado"><option value="__all__">Todos</option></select></div>
-    <div class="grp"><label>Analista</label><select id="fAnalista"><option value="__all__">Todos</option></select></div>
     <div class="grp"><label>Presupuesto</label><select id="fPresupuesto"><option value="__all__">Todos</option></select></div>
     <div class="grp" style="flex:1;min-width:180px;"><label>Buscar</label><input type="text" id="fSearch" placeholder="institución, emergencia, comuna…"></div>
     <button id="btnClear">Limpiar filtros</button>
@@ -144,9 +144,9 @@
       <div class="chart-card"><h3>Distribución por clasificación de emergencia</h3><div class="chart-holder"><canvas id="chartClasificacion"></canvas></div></div>
       <div class="chart-card"><h3>Estado de las resoluciones</h3><div class="chart-holder"><canvas id="chartEstado"></canvas></div></div>
       <div class="chart-card" style="grid-column:1 / -1;"><h3>Evolución mensual de fondos transferidos</h3><div class="chart-holder tall"><canvas id="chartEvolucion"></canvas></div></div>
-      <div class="chart-card" style="grid-column:1 / -1;"><h3>Aprobado vs. transferido vs. pendiente — top regiones</h3><div class="chart-holder tall"><canvas id="chartComparacion"></canvas></div></div>
+      <div class="chart-card" style="grid-column:1 / -1;"><h3>Aprobado vs. transferido por año de emergencia</h3><div class="chart-holder tall"><canvas id="chartComparacion"></canvas></div></div>
       <div class="chart-card"><h3>Fondos por institución pagadora</h3><div class="chart-holder"><canvas id="chartInstitucion"></canvas></div></div>
-      <div class="chart-card"><h3>Monto gestionado por analista</h3><div class="chart-holder"><canvas id="chartAnalista"></canvas></div></div>
+      <div class="chart-card"><h3>% Ejecución por región (transferido / aprobado)</h3><div class="chart-holder"><canvas id="chartEjecucionRegion"></canvas></div></div>
     </div>
 
     <div class="table-section">
@@ -186,7 +186,7 @@ let CHARTS = {};
 let TABLE = null;
 let AUTO_TIMER = null;
 
-const FILTER_KEYS = ['fClasificacion','fEvento','fTipoBono','fEstado','fAnalista','fPresupuesto','fSearch'];
+const FILTER_KEYS = ['fClasificacion','fEvento','fAnioEmergencia','fTipoBono','fEstado','fPresupuesto','fSearch'];
 const LS_KEY = 'bonosDashboardFilters_v1';
 /* Región: multi-selección. Arreglo vacío = todas las regiones (sin filtro). */
 let SELECTED_REGIONS = [];
@@ -327,6 +327,9 @@ async function loadData(){
       // Nombre específico del evento (columna H de la planilla). Si no existe (planillas antiguas
       // o si se elimina la columna), se usa TIPO DE EMERGENCIA como respaldo.
       row._nombreEvento = (row['NOMBRE EVENTO'] || row['TIPO DE EMERGENCIA'] || 'Sin nombre').trim();
+      // Año de la emergencia (columna B), usado para el filtro "Año emergencia" y para el
+      // gráfico de aprobado vs. transferido por año.
+      row._anioEmergencia = row._fechaEmergencia ? String(row._fechaEmergencia.getFullYear()) : null;
       return row;
     });
 
@@ -375,6 +378,10 @@ function uniqueEventsByRecency(rows){
     if (fa !== fb) return fb - fa;
     return a[0].localeCompare(b[0], 'es');
   }).map(e => e[0]);
+}
+/* Años únicos de FECHA EMERGENCIA (columna B), de más reciente a más antiguo. */
+function uniqueYearsDesc(rows){
+  return [...new Set(rows.map(r=>r._anioEmergencia).filter(Boolean))].sort((a,b)=> Number(b) - Number(a));
 }
 function fillSelect(id, values){
   const sel = document.getElementById(id);
@@ -429,9 +436,9 @@ function populateFilters(){
   populateRegionOptions();
   fillSelect('fClasificacion', uniqueSorted(ALL_ROWS.map(r=>r._clasificacion)));
   fillSelect('fEvento', uniqueEventsByRecency(ALL_ROWS));
+  fillSelect('fAnioEmergencia', uniqueYearsDesc(ALL_ROWS));
   fillSelect('fTipoBono', uniqueSorted(ALL_ROWS.map(r=>r._tipoBono)));
   fillSelect('fEstado', uniqueSorted(ALL_ROWS.map(r=>r._estadoResolucion)));
-  fillSelect('fAnalista', uniqueSorted(ALL_ROWS.map(r=>r._analista)));
   fillSelect('fPresupuesto', uniqueSorted(ALL_ROWS.map(r=>r._presupuesto)));
 }
 function saveFilters(){
@@ -460,9 +467,9 @@ function restoreFilters(){
 function applyFilters(){
   const clasificacion = document.getElementById('fClasificacion').value;
   const evento = document.getElementById('fEvento').value;
+  const anioEmergencia = document.getElementById('fAnioEmergencia').value;
   const tipoBono = document.getElementById('fTipoBono').value;
   const estado = document.getElementById('fEstado').value;
-  const analista = document.getElementById('fAnalista').value;
   const presupuesto = document.getElementById('fPresupuesto').value;
   const search = document.getElementById('fSearch').value.trim().toLowerCase();
 
@@ -470,9 +477,9 @@ function applyFilters(){
     if (SELECTED_REGIONS.length > 0 && !SELECTED_REGIONS.includes(r._region)) return false;
     if (clasificacion !== '__all__' && r._clasificacion !== clasificacion) return false;
     if (evento !== '__all__' && r._nombreEvento !== evento) return false;
+    if (anioEmergencia !== '__all__' && r._anioEmergencia !== anioEmergencia) return false;
     if (tipoBono !== '__all__' && r._tipoBono !== tipoBono) return false;
     if (estado !== '__all__' && r._estadoResolucion !== estado) return false;
-    if (analista !== '__all__' && r._analista !== analista) return false;
     if (presupuesto !== '__all__' && r._presupuesto !== presupuesto) return false;
     if (search){
       const hay = [r._institucion, r._tipoEmergencia, r['COMUNA'], r['PROVINCIA'], r._tipoBono, r._region].join(' ').toLowerCase();
@@ -500,7 +507,7 @@ function toggleExtraFilter(dim, value){
   applyFilters();
 }
 function clearAllFilters(){
-  ['fClasificacion','fEvento','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => document.getElementById(id).value = '__all__');
+  ['fClasificacion','fEvento','fAnioEmergencia','fTipoBono','fEstado','fPresupuesto'].forEach(id => document.getElementById(id).value = '__all__');
   document.getElementById('fSearch').value = '';
   SELECTED_REGIONS = [];
   syncRegionUI();
@@ -541,7 +548,7 @@ function renderActiveFilterChips(){
   SELECTED_REGIONS.forEach(v => {
     chips.push({ label: 'Región: ' + v, clear: () => { SELECTED_REGIONS = SELECTED_REGIONS.filter(x => x !== v); syncRegionUI(); applyFilters(); } });
   });
-  [['fClasificacion','Clasificación'],['fEvento','Evento'],['fTipoBono','Tipo de bono'],['fEstado','Estado resolución'],['fAnalista','Analista'],['fPresupuesto','Presupuesto']].forEach(([id,label]) => {
+  [['fClasificacion','Clasificación'],['fEvento','Evento'],['fAnioEmergencia','Año emergencia'],['fTipoBono','Tipo de bono'],['fEstado','Estado resolución'],['fPresupuesto','Presupuesto']].forEach(([id,label]) => {
     const v = document.getElementById(id).value;
     if (v !== '__all__') chips.push({ label: label + ': ' + v, clear: () => { document.getElementById(id).value = '__all__'; applyFilters(); } });
   });
@@ -636,10 +643,11 @@ function renderCharts(rows){
   const activeTipoBono = document.getElementById('fTipoBono').value === '__all__' ? null : document.getElementById('fTipoBono').value;
   const activeClasificacion = document.getElementById('fClasificacion').value === '__all__' ? null : document.getElementById('fClasificacion').value;
   const activeEstado = document.getElementById('fEstado').value === '__all__' ? null : document.getElementById('fEstado').value;
-  const activeAnalista = document.getElementById('fAnalista').value === '__all__' ? null : document.getElementById('fAnalista').value;
   const activeInstitucion = EXTRA_FILTERS.institucion;
   const activeEventoSel = document.getElementById('fEvento').value;
   const activeEvento = activeEventoSel === '__all__' ? null : activeEventoSel;
+  const activeAnioSel = document.getElementById('fAnioEmergencia').value;
+  const activeAnio = activeAnioSel === '__all__' ? null : activeAnioSel;
   const activeMes = EXTRA_FILTERS.mes;
 
   const evGroups = new Map();
@@ -701,19 +709,24 @@ function renderCharts(rows){
     pointRadius: monthKeys.map(k => k===activeMes ? 6 : 4), pointHoverRadius: 7
   }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=> fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx) => toggleExtraFilter('mes', monthKeys[idx])), onHover: hoverCursor } });
 
-  const compMap = new Map();
-  rows.forEach(r => { const k = r._region; if (!compMap.has(k)) compMap.set(k, {aprobado:0, transferido:0, pendiente:0}); const o = compMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; o.pendiente += r._fondosPorTransferir; });
-  const compTop = [...compMap.entries()].sort((a,b)=>b[1].aprobado-a[1].aprobado).slice(0,8);
-  const compLabels = compTop.map(e=>e[0]);
-  ensureChart('chartComparacion', { type:'bar', data:{ labels: compLabels, datasets:[ { label:'Aprobado', data: compTop.map(e=>e[1].aprobado), backgroundColor: dimSeriesMulti(PALETTE[3], compLabels, activeRegions) }, { label:'Transferido', data: compTop.map(e=>e[1].transferido), backgroundColor: dimSeriesMulti(PALETTE[1], compLabels, activeRegions) }, { label:'Pendiente', data: compTop.map(e=>e[1].pendiente), backgroundColor: dimSeriesMulti(PALETTE[2], compLabels, activeRegions) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx, chart) => toggleRegionFilter(chart.data.labels[idx])), onHover: hoverCursor } });
+  // Aprobado vs. transferido por año de emergencia (columna B), de más antiguo a más reciente
+  const anioMap = new Map();
+  rows.forEach(r => { const k = r._anioEmergencia; if (!k) return; if (!anioMap.has(k)) anioMap.set(k, { aprobado:0, transferido:0 }); const o = anioMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; });
+  const anioEntries = [...anioMap.entries()].sort((a,b)=> Number(a[0]) - Number(b[0]));
+  const anioLabels = anioEntries.map(e=>e[0]);
+  ensureChart('chartComparacion', { type:'bar', data:{ labels: anioLabels, datasets:[ { label:'Aprobado', data: anioEntries.map(e=>e[1].aprobado), backgroundColor: dimSeries(PALETTE[3], anioLabels, activeAnio) }, { label:'Transferido', data: anioEntries.map(e=>e[1].transferido), backgroundColor: dimSeries(PALETTE[1], anioLabels, activeAnio) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx) => toggleSelectFilter('fAnioEmergencia', anioLabels[idx])), onHover: hoverCursor } });
 
   const instMap = topEntries(sumByKey(rows, r=>r._institucion, r=>r._fondosTransferidos), 10);
   const instLabels = instMap.map(e=>e[0]);
   ensureChart('chartInstitucion', { type:'bar', data:{ labels: instLabels, datasets:[{ label:'Transferido', data: instMap.map(e=>e[1]), backgroundColor: dimSeries(PALETTE[4], instLabels, activeInstitucion) }] }, options:{ ...commonBarOpts, indexAxis:'y', onClick: chartClickHandler((idx, chart) => toggleExtraFilter('institucion', chart.data.labels[idx])), onHover: hoverCursor } });
 
-  const analMap = topEntries(sumByKey(rows, r=>r._analista, r=>r._fondosTransferidos), 10);
-  const analLabels = analMap.map(e=>e[0]);
-  ensureChart('chartAnalista', { type:'bar', data:{ labels: analLabels, datasets:[{ label:'Transferido', data: analMap.map(e=>e[1]), backgroundColor: dimSeries(PALETTE[5], analLabels, activeAnalista) }] }, options:{ ...commonBarOpts, indexAxis:'y', onClick: chartClickHandler((idx, chart) => toggleSelectFilter('fAnalista', chart.data.labels[idx])), onHover: hoverCursor } });
+  // % Ejecución por región (transferido / aprobado) — las 12 regiones con menor ejecución primero,
+  // para poner el foco en dónde falta avanzar con los giros.
+  const execByRegion = new Map();
+  rows.forEach(r => { const k = r._region; if (!execByRegion.has(k)) execByRegion.set(k, { aprobado:0, transferido:0 }); const o = execByRegion.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; });
+  const execEntries = [...execByRegion.entries()].filter(([,v]) => v.aprobado > 0).map(([k,v]) => [k, Math.min(100, (v.transferido / v.aprobado) * 100)]).sort((a,b)=> a[1] - b[1]).slice(0, 12);
+  const execLabels = execEntries.map(e=>e[0]);
+  ensureChart('chartEjecucionRegion', { type:'bar', data:{ labels: execLabels, datasets:[{ label:'% Ejecución', data: execEntries.map(e=>e[1]), backgroundColor: dimSeriesMulti(PALETTE[5], execLabels, activeRegions) }] }, options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=> c.parsed.x.toFixed(1) + '% ejecutado' } } }, scales:{ x:{ min:0, max:100, ticks:{ callback:(v)=> v + '%' } } }, onClick: chartClickHandler((idx, chart) => toggleRegionFilter(chart.data.labels[idx])), onHover: hoverCursor } });
 }
 
 /* ---------------- Table ---------------- */
@@ -765,7 +778,7 @@ document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e
 /* ---------------- Orchestrator ---------------- */
 function renderAll(){ renderKPIs(FILTERED); renderCharts(FILTERED); renderTable(FILTERED); renderActiveFilterChips(); }
 
-['fClasificacion','fEvento','fTipoBono','fEstado','fAnalista','fPresupuesto'].forEach(id => {
+['fClasificacion','fEvento','fAnioEmergencia','fTipoBono','fEstado','fPresupuesto'].forEach(id => {
   document.getElementById(id).addEventListener('change', applyFilters);
 });
 let searchTimer;
