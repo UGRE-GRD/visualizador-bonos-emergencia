@@ -144,7 +144,7 @@
       <div class="chart-card"><h3>Distribución por clasificación de emergencia</h3><div class="chart-holder"><canvas id="chartClasificacion"></canvas></div></div>
       <div class="chart-card"><h3>Estado de las resoluciones</h3><div class="chart-holder"><canvas id="chartEstado"></canvas></div></div>
       <div class="chart-card" style="grid-column:1 / -1;"><h3>Evolución mensual de fondos transferidos</h3><div class="chart-holder tall"><canvas id="chartEvolucion"></canvas></div></div>
-      <div class="chart-card" style="grid-column:1 / -1;"><h3>Aprobado vs. transferido por año de emergencia</h3><div class="chart-holder tall"><canvas id="chartComparacion"></canvas></div></div>
+      <div class="chart-card" style="grid-column:1 / -1;"><h3>Aprobado vs. transferido por año de transferencia</h3><div class="chart-holder tall"><canvas id="chartComparacion"></canvas></div></div>
       <div class="chart-card"><h3>Fondos por institución pagadora</h3><div class="chart-holder"><canvas id="chartInstitucion"></canvas></div></div>
       <div class="chart-card"><h3>% Ejecución por región (transferido / aprobado)</h3><div class="chart-holder"><canvas id="chartEjecucionRegion"></canvas></div></div>
     </div>
@@ -206,7 +206,7 @@ function sortRegionsGeo(arr){
 }
 /* Filtros adicionales que se activan al hacer clic en un gráfico y no tienen un <select> propio
    (institución, evento de emergencia, mes). 'evento' se guarda como 'TIPO|AÑO'. */
-let EXTRA_FILTERS = { institucion: null, mes: null };
+let EXTRA_FILTERS = { institucion: null, mes: null, anioTransferencia: null };
 
 /* ---------------- Formatting helpers ---------------- */
 function parseCLP(s){
@@ -330,6 +330,7 @@ async function loadData(){
       // Año de la emergencia (columna B), usado para el filtro "Año emergencia" y para el
       // gráfico de aprobado vs. transferido por año.
       row._anioEmergencia = row._fechaEmergencia ? String(row._fechaEmergencia.getFullYear()) : null;
+      row._anioTransferencia = row._fechaTransferencia ? String(row._fechaTransferencia.getFullYear()) : null;
       return row;
     });
 
@@ -490,6 +491,7 @@ function applyFilters(){
       const key = r._fechaTransferencia ? (r._fechaTransferencia.getFullYear() + '-' + String(r._fechaTransferencia.getMonth()+1).padStart(2,'0')) : null;
       if (key !== EXTRA_FILTERS.mes) return false;
     }
+    if (EXTRA_FILTERS.anioTransferencia && r._anioTransferencia !== EXTRA_FILTERS.anioTransferencia) return false;
     return true;
   });
   saveFilters();
@@ -511,7 +513,7 @@ function clearAllFilters(){
   document.getElementById('fSearch').value = '';
   SELECTED_REGIONS = [];
   syncRegionUI();
-  EXTRA_FILTERS = { institucion: null, mes: null };
+  EXTRA_FILTERS = { institucion: null, mes: null, anioTransferencia: null };
   applyFilters();
 }
 function withAlpha(hex, alpha){
@@ -554,6 +556,7 @@ function renderActiveFilterChips(){
   });
   if (EXTRA_FILTERS.institucion) chips.push({ label: 'Institución: ' + EXTRA_FILTERS.institucion, clear: () => { EXTRA_FILTERS.institucion = null; applyFilters(); } });
   if (EXTRA_FILTERS.mes) chips.push({ label: 'Mes: ' + EXTRA_FILTERS.mes, clear: () => { EXTRA_FILTERS.mes = null; applyFilters(); } });
+  if (EXTRA_FILTERS.anioTransferencia) chips.push({ label: 'Año transferencia: ' + EXTRA_FILTERS.anioTransferencia, clear: () => { EXTRA_FILTERS.anioTransferencia = null; applyFilters(); } });
 
   if (chips.length === 0){ box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'flex';
@@ -646,8 +649,7 @@ function renderCharts(rows){
   const activeInstitucion = EXTRA_FILTERS.institucion;
   const activeEventoSel = document.getElementById('fEvento').value;
   const activeEvento = activeEventoSel === '__all__' ? null : activeEventoSel;
-  const activeAnioSel = document.getElementById('fAnioEmergencia').value;
-  const activeAnio = activeAnioSel === '__all__' ? null : activeAnioSel;
+  const activeAnioTransferencia = EXTRA_FILTERS.anioTransferencia;
   const activeMes = EXTRA_FILTERS.mes;
 
   const evGroups = new Map();
@@ -709,12 +711,13 @@ function renderCharts(rows){
     pointRadius: monthKeys.map(k => k===activeMes ? 6 : 4), pointHoverRadius: 7
   }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=> fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx) => toggleExtraFilter('mes', monthKeys[idx])), onHover: hoverCursor } });
 
-  // Aprobado vs. transferido por año de emergencia (columna B), de más antiguo a más reciente
+  // Aprobado vs. transferido por año de TRANSFERENCIA (columna Z), de más antiguo a más reciente.
+  // Solo incluye filas con fecha de transferencia registrada.
   const anioMap = new Map();
-  rows.forEach(r => { const k = r._anioEmergencia; if (!k) return; if (!anioMap.has(k)) anioMap.set(k, { aprobado:0, transferido:0 }); const o = anioMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; });
+  rows.forEach(r => { const k = r._anioTransferencia; if (!k) return; if (!anioMap.has(k)) anioMap.set(k, { aprobado:0, transferido:0 }); const o = anioMap.get(k); o.aprobado += r._fondosAprobados; o.transferido += r._fondosTransferidos; });
   const anioEntries = [...anioMap.entries()].sort((a,b)=> Number(a[0]) - Number(b[0]));
   const anioLabels = anioEntries.map(e=>e[0]);
-  ensureChart('chartComparacion', { type:'bar', data:{ labels: anioLabels, datasets:[ { label:'Aprobado', data: anioEntries.map(e=>e[1].aprobado), backgroundColor: dimSeries(PALETTE[3], anioLabels, activeAnio) }, { label:'Transferido', data: anioEntries.map(e=>e[1].transferido), backgroundColor: dimSeries(PALETTE[1], anioLabels, activeAnio) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx) => toggleSelectFilter('fAnioEmergencia', anioLabels[idx])), onHover: hoverCursor } });
+  ensureChart('chartComparacion', { type:'bar', data:{ labels: anioLabels, datasets:[ { label:'Aprobado', data: anioEntries.map(e=>e[1].aprobado), backgroundColor: dimSeries(PALETTE[3], anioLabels, activeAnioTransferencia) }, { label:'Transferido', data: anioEntries.map(e=>e[1].transferido), backgroundColor: dimSeries(PALETTE[1], anioLabels, activeAnioTransferencia) } ] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(c)=> c.dataset.label + ': ' + fmtCLP(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:(v)=>fmtCLPShort(v) } } }, onClick: chartClickHandler((idx) => toggleExtraFilter('anioTransferencia', anioLabels[idx])), onHover: hoverCursor } });
 
   const instMap = topEntries(sumByKey(rows, r=>r._institucion, r=>r._fondosTransferidos), 10);
   const instLabels = instMap.map(e=>e[0]);
